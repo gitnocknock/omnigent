@@ -486,6 +486,44 @@ async def test_get_client_any_harness_sentinel_no_subprocess_raises(
         await manager.shutdown()
 
 
+async def test_get_client_any_harness_sentinel_ignores_model_override(
+    manager: HarnessProcessManager,
+) -> None:
+    """A model override passed alongside the ``"any"`` sentinel is a no-op.
+
+    ``"any"`` has no concrete harness to respawn INTO, so the model-change
+    check must skip entirely when ``harness == "any"`` — mirroring the
+    harness-mismatch check's own ``"any"`` exclusion just above it. Before
+    the fix, the check instead built its ``env`` lookup key from the
+    ``harness`` argument itself; ``_model_env_key("any")`` never matched a
+    real ``HARNESS_<H>_MODEL`` key, so this happened to no-op too, but only
+    by accident. A naive fix that keys on ``entry.harness`` instead (so the
+    lookup actually matches) makes things WORSE: it detects the "model
+    changed" and closes the entry, then falls through to
+    ``NoLiveHarnessError`` because ``"any"`` can't be spawned — turning a
+    harness-agnostic steering/cancel call into a hard failure. This test
+    guards the correct behavior: a live subprocess, untouched, no error.
+    """
+    await manager.start()
+    try:
+        client_first = await manager.get_client(
+            "conv_a", _TEST_HARNESS_NAME, env={"HARNESS_TEST_MODEL": "model-a"}
+        )
+        pid_first = (await client_first.get("/pid")).json()["pid"]
+
+        # "any" sentinel + a DIFFERENT model → must NOT respawn or raise.
+        client_second = await manager.get_client(
+            "conv_a", "any", env={"HARNESS_TEST_MODEL": "model-b"}
+        )
+        pid_second = (await client_second.get("/pid")).json()["pid"]
+
+        # Same PID proves the live subprocess was reused untouched.
+        assert pid_second == pid_first
+        assert _pid_alive(pid_second)
+    finally:
+        await manager.shutdown()
+
+
 async def test_get_client_concurrent_first_calls_share_subprocess(
     manager: HarnessProcessManager,
 ) -> None:

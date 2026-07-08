@@ -724,14 +724,20 @@ class HarnessProcessManager:
                 )
                 await self._close_entry(entry)
                 entry = None
-            if entry is not None:
+            if entry is not None and harness != "any":
                 # The model is baked into the subprocess env at spawn time;
                 # a later turn requesting a different model (e.g. after the
                 # user runs ``/model``) must respawn, otherwise the cached
                 # process keeps serving the old model. Only respawn when a
                 # concrete different model is requested — a turn that sets no
                 # model env (``None``) keeps the running process.
-                requested_model = (env or {}).get(_model_env_key(harness))
+                #
+                # ``harness != "any"`` mirrors the harness-mismatch guard
+                # above: closing the entry here with no concrete harness to
+                # respawn from would fall through to the ``NoLiveHarnessError``
+                # raise below, turning a harness-agnostic steering/cancel call
+                # into a hard failure instead of reusing the live subprocess.
+                requested_model = (env or {}).get(_model_env_key(entry.harness))
                 if requested_model is not None and requested_model != entry.model:
                     _logger.info(
                         "harness %s for conversation %s: model changed %r -> %r; respawning",
